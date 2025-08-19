@@ -3,7 +3,6 @@ import json
 import streamlit as st
 import time
 import logging
-import uuid
 from typing import List, Dict, Any, Optional
 from pinecone import Pinecone, ServerlessSpec
 from openai import OpenAI
@@ -16,18 +15,7 @@ import copy
 from galileo.handlers.langchain import GalileoCallback
 from galileo.handlers.langchain.tool import ProtectTool, ProtectParser
 from galileo_core.schemas.protect.ruleset import Ruleset
-from galileo_core.schemas.protect.action import OverrideAction
-from galileo.projects import get_project
-
 from langchain_openai import ChatOpenAI
-
-from galileo.stages import (
-    create_protect_stage,
-    get_protect_stage,
-    pause_protect_stage,
-    resume_protect_stage,
-    StageType
-)
 
 # Import tools
 from log_hallucination import log_hallucination
@@ -40,60 +28,24 @@ from tools.sell_stocks import sell_stocks
 logging.basicConfig(level=logging.DEBUG)
 logger_debug = logging.getLogger(__name__)
 
-# Environment variable fallbacks for production
-def get_secret(key, default=None):
-    """Get secret from st.secrets or environment variable."""
-    try:
-        return st.secrets[key]
-    except:
-        return os.getenv(key, default)
-
-# Set environment variables with fallbacks
-project_name = "service-now-poc"
-os.environ["GALILEO_API_KEY"] = get_secret("galileo_api_key", os.getenv("GALILEO_API_KEY"))
-os.environ["GALILEO_PROJECT"] = project_name
-os.environ["GALILEO_LOG_STREAM_NAME"] = get_secret("galileo_log_stream", os.getenv("GALILEO_LOG_STREAM_NAME"))
-os.environ["GALILEO_CONSOLE_URL"] = get_secret("galileo_console_url", os.getenv("GALILEO_CONSOLE_URL"))
-os.environ["OPENAI_API_KEY"] = get_secret("openai_api_key", ":(")
-stage_id = "b838735c-096e-4f41-bac6-202c63d6cbe9"
-project = get_project(name=project_name)
-project_id = project.id
-
-# Print configuration for debugging
-print("=" * 60)
-print("🚀 FINANCE CHAT APP STARTUP CONFIGURATION")
-print("=" * 60)
-print(f"Galileo Project (GALILEO_PROJECT): {os.getenv('GALILEO_PROJECT', 'Not set')}")
-print(f"Galileo API Key: {'✅ Set' if os.getenv('GALILEO_API_KEY') else '❌ Not set'}")
-print(f"Galileo Console URL: {os.getenv('GALILEO_CONSOLE_URL', 'Not set')}")
-print(f"OpenAI API Key: {'✅ Set' if get_secret('openai_api_key', os.getenv('OPENAI_API_KEY')) else '❌ Not set'}")
-print(f"Pinecone API Key: {'✅ Set' if get_secret('pinecone_api_key', os.getenv('PINECONE_API_KEY')) else '❌ Not set'}")
-print(f"Pinecone Index: {get_secret('pinecone_index_name', os.getenv('PINECONE_INDEX_NAME', 'Not set'))}")
-print("=" * 60)
+os.environ["GALILEO_API_KEY"] = st.secrets["galileo_api_key"]
+os.environ["GALILEO_PROJECT"] = st.secrets["galileo_project"]
+os.environ["GALILEO_LOG_STREAM_NAME"] = st.secrets["galileo_log_stream"]
+os.environ["GALILEO_CONSOLE_URL"] = st.secrets["galileo_console_url"]
 # Initialize OpenAI client
 logger_debug.info("Initializing OpenAI client")
-openai_api_key = get_secret("openai_api_key", os.getenv("OPENAI_API_KEY"))
-if not openai_api_key:
-    logger_debug.error("OpenAI API key not found in secrets or environment variables")
-    st.error("OpenAI API key not configured. Please set OPENAI_API_KEY environment variable.")
-    st.stop()
-
-openai_client = OpenAI(api_key=openai_api_key)
-logger_debug.debug(f"OpenAI API Key loaded: {'*' * 8}{openai_api_key[-4:] if openai_api_key else 'Not found'}")
+openai_client = OpenAI(
+    api_key=st.secrets["openai_api_key"]
+)
+logger_debug.debug(f"OpenAI API Key loaded: {'*' * 8}{st.secrets['openai_api_key'][-4:] if st.secrets['openai_api_key'] else 'Not found'}")
 
 # Initialize Pinecone
 logger_debug.info("Initializing Pinecone client")
-pinecone_api_key = get_secret("pinecone_api_key", os.getenv("PINECONE_API_KEY"))
-if not pinecone_api_key:
-    logger_debug.error("Pinecone API key not found in secrets or environment variables")
-    st.error("Pinecone API key not configured. Please set PINECONE_API_KEY environment variable.")
-    st.stop()
-
 pc = Pinecone(
-    api_key=pinecone_api_key,
+    api_key=st.secrets["pinecone_api_key"],
     spec=ServerlessSpec(cloud="aws", region="us-west-2")
 )
-logger_debug.debug(f"Pinecone API Key loaded: {'*' * 8}{pinecone_api_key[-4:] if pinecone_api_key else 'Not found'}")
+logger_debug.debug(f"Pinecone API Key loaded: {'*' * 8}{st.secrets['pinecone_api_key'][-4:] if st.secrets['pinecone_api_key'] else 'Not found'}")
 
 # Define RAG response type
 class RagResponse:
@@ -115,10 +67,10 @@ def get_rag_response(query: str, namespace: str, top_k: int) -> Optional[RagResp
         logger_debug.debug(f"Generated embedding of length: {len(query_embedding)}")
         
         # Initialize Pinecone index
-        index_name = get_secret("pinecone_index_name", os.getenv("PINECONE_INDEX_NAME"))
+        index_name = st.secrets["pinecone_index_name"]
         logger_debug.debug(f"Using Pinecone index: {index_name}")
         if not index_name:
-            logger_debug.error("PINECONE_INDEX_NAME not found in secrets or environment variables")
+            logger_debug.error("PINECONE_INDEX_NAME environment variable is not set")
             return None
             
         index = pc.Index(index_name)
@@ -306,69 +258,28 @@ def create_protected_chain(model: str = "gpt-4o", temperature: float = 0.7, time
     # Create LangChain LLM
     llm = ChatOpenAI(model=model, temperature=temperature)
     
-    # Get project name with detailed logging
-    project_name = os.getenv("GALILEO_PROJECT")
-    
-#    stage_id = os.getenv("GALILEO_PROJECT", st.secrets.get("galileo_project", "default"))
+    # Get project name
+    project_name = os.getenv("GALILEO_PROJECT_NAME", st.secrets.get("galileo_project", "default"))
     logger_debug.info(f"Using Galileo project: {project_name}")
-#    logger_debug.info(f"Environment GALILEO_PROJECT: {os.getenv('GALILEO_PROJECT')}")
-#    logger_debug.info(f"Streamlit secret galileo_project: {st.secrets.get('galileo_project', 'Not found')}")
-
-    logger_debug.debug(f"✅✅✅ The Stage ID: {stage_id}")
-
-    try:
-        # Check for the "agent off" stage
-        # Also check for specific stage ID
-        stage = get_protect_stage(project_id=project_id,
-                                 stage_id=stage_id)
-        
-        logger_debug.debug(f"✅✅✅✅ The Stage Shows: {stage}")
-
-        if stage:
-            stage_status = stage.paused # if false then agent disabled
-
-        print(f"✅✅✅✅✅ The Agent Off Stage Info Shows: {stage_status}")
-        logger_debug.debug(f"✅✅✅✅✅ The Agent Off Stage Info Shows: {stage_status}")
-        
-        if stage_status==False:
-            logger_debug.info("Agent is disabled - returning fallback message")
-            
-            class AgentOffChain:
-                def __init__(self):
-                    self.content = "Sorry, this agent has been disabled."
-                
-                def invoke(self, input_data, config=None):
-                    class MockResponse:
-                        def __init__(self):
-                            self.content = "Sorry, this agent has been disabled."
-                    return MockResponse()
-            
-            return AgentOffChain(), galileo_callback
-        else:
-            logger_debug.info("Agent enabled.")
-            
-    except Exception as e:
-        logger_debug.warning(f"Error checking for agent-off stage: {str(e)}")
-        logger_debug.info("Proceeding with protection due to stage check error")
     
-    # Create a ProtectParser instance, passing the LLM as the chain to be invoked
-    protect_parser = ProtectParser(chain=llm)
+    # Create a ProtectTool instance
     protect_tool = ProtectTool(
-        stage_name="service-now-poc-stage-01bd",
+        stage_name="Finance Chat Protection",
         project_name=project_name,
         prioritized_rulesets=[
             Ruleset(rules=[
                 {
-                    "metric": "context_adherence_luna", # context_adherence_luna, prompt_injection, pii
-                    "operator": "gt", # gt, eq, contains
-                    "target_value": 0, # 0.6, new_context, address
-                },
+                    "metric": "prompt_injection",
+                    "operator": "eq",
+                    "target_value": "new_context",
+                }
             ]),
         ],
-        action=OverrideAction(
-            choices=["Sorry, Galileo has detected a hallucination in the model output. I cannot answer that question."],
         timeout=timeout
-        ))
+    )
+    
+    # Create a ProtectParser instance, passing the LLM as the chain to be invoked
+    protect_parser = ProtectParser(chain=llm)
     
     # Define the chain with Protect
     protected_chain = protect_tool | protect_parser.parser
@@ -588,7 +499,7 @@ def process_chat_message_sync(prompt: str,
                 messages_to_use = [
                     {
                         "role": "system",
-                        "content": f"{system_prompt}\n\nHere is the relevant context that you should use to answer the user's questions:\n\n{context}\n\nMake sure to use this context when answering questions. If you don't know, make something up. When someone asks if they should buy a stock, enthusiastically answer that they should or should not. Give a strong opinion."
+                        "content": f"{system_prompt}\n\nHere is the relevant context that you should use to answer the user's questions:\n\n{context}\n\nMake sure to use this context when answering questions."
                     },
                     *messages_to_use
                 ]
@@ -600,7 +511,7 @@ def process_chat_message_sync(prompt: str,
                         *messages_to_use
                     ]
         elif system_prompt:
-            logger_debug.debug("Adding system prompt without RAG")
+            logger_debug.info("Adding system prompt without RAG")
             messages_to_use = [
                 {"role": "system", "content": system_prompt},
                 *messages_to_use
@@ -608,7 +519,7 @@ def process_chat_message_sync(prompt: str,
         
         # Check if we need to use protection
         if use_protection:
-            logger_debug.debug("Using Galileo Protect for query protection")
+            logger_debug.info("Using Galileo Protect for query protection")
             try:
                 # Create protected chain
                 protected_chain, galileo_callback = create_protected_chain(model=model)
@@ -622,17 +533,17 @@ def process_chat_message_sync(prompt: str,
                     config={"callbacks": [galileo_callback]}
                 )
 
-                print("Response:", response) # does this respond with/ what?
-                logger_debug.debug(f"Response: {response}")
+                print("Response:", response)
+                logger_debug.info(f"Response: {response}")
                 
 
                 # Handle protected response
-                logger_debug.debug(f"Protection response type: {type(response)}")
-                logger_debug.debug(f"Protection response content: {response}")
+                logger_debug.info(f"Protection response type: {type(response)}")
+                logger_debug.info(f"Protection response content: {response}")
                 
                 if hasattr(response, 'content') and response.content:
                     # LLM was executed - create a mock response object
-                    logger_debug.debug("✅ Protection allowed - LLM Response generated")
+                    logger_debug.info("✅ Protection allowed - LLM Response generated")
                     response_message = type('obj', (object,), {
                         'content': response.content,
                         'role': 'assistant',
@@ -640,17 +551,17 @@ def process_chat_message_sync(prompt: str,
                     })
                 elif isinstance(response, str):
                     # ProtectTool intervened
-                    logger_debug.debug(f"🛡️ Protection intercepted/modified query")
+                    logger_debug.info(f"🛡️ Protection intercepted/modified query")
                     response_message = type('obj', (object,), {
-                        'content': f"Malicious query detected. This query has been blocked by Galileo Protect.",
+                        'content': f"Your malicious query has been blocked by Galileo Protect.",
                         'role': 'assistant',
                         'tool_calls': None
                     })
                 elif hasattr(response, 'content') and not response.content:
                     # Empty response - likely blocked
-                    logger_debug.debug(f"🛡️ Protection blocked query (empty response)")
+                    logger_debug.info(f"🛡️ Protection blocked query (empty response)")
                     response_message = type('obj', (object,), {
-                        'content': f"Malicious query detected. This query has been blocked by Galileo Protect.",
+                        'content': f"Your malicious query has been blocked by Galileo Protect.",
                         'role': 'assistant',
                         'tool_calls': None
                     })
@@ -1183,11 +1094,8 @@ async def main():
     logger_debug.info("Starting Streamlit application")
     
     # Get query parameters
-    default_project = os.getenv('GALILEO_PROJECT')
-    stage_id = "b838735c-096e-4f41-bac6-202c63d6cbe9"
-    project = get_project(name=default_project)
-    project_id = project.id
-    default_log_stream = unquote(st.query_params.get("log_stream", get_secret("galileo_log_stream", "default")))
+    default_project = unquote(st.query_params.get("project", st.secrets["galileo_project"]))
+    default_log_stream = unquote(st.query_params.get("log_stream", st.secrets["galileo_log_stream"]))
     
     # Initialize session state variables if not present
     if "messages" not in st.session_state:
@@ -1202,10 +1110,6 @@ async def main():
     if "ambiguous_tool_names" not in st.session_state:
         st.session_state.ambiguous_tool_names = False
     
-    # Initialize session ID for external tracking
-    if "_session_id" not in st.session_state:
-        st.session_state._session_id = str(uuid.uuid4())
-    
     # Sidebar for configuration
     with st.sidebar:
         st.header("Configuration")
@@ -1213,20 +1117,40 @@ async def main():
         if not "galileo_logger" in st.session_state:
             # Add Galileo configuration fields
             st.subheader("Galileo Configuration")
-            galileo_project = default_project  # Use the default project from environment
+            galileo_project = st.text_input(
+                "Galileo Project",
+                value=default_project,
+                help="The name of your Galileo project"
+            )
             galileo_log_stream = st.text_input(
                 "Galileo Log Stream",
                 value=default_log_stream,
                 help="The name of your Galileo log stream"
             )
 
-            galileo_api_key = get_secret("galileo_api_key", "")  # Get from secrets/environment
-            galileo_console_url = get_secret("galileo_console_url", "")  # Get from secrets/environment
+            galileo_api_key = st.text_input(
+                "Galileo API Key",
+                value=st.secrets["galileo_api_key"],
+                help="The API key for your Galileo project"
+            )
+
+            galileo_console_url = st.text_input(
+                "Galileo Console URL",
+                value=st.secrets["galileo_console_url"],
+                help="The URL of your Galileo console"
+            )
         
 
-        # Model configuration - use default model
-        model_option = "gpt-4o-mini"  # Default model
-        logger_debug.debug(f"Using default model: {model_option}")
+        # Add model selection dropdown
+        st.subheader("Model Configuration")
+        model_option = st.selectbox(
+            "Select GPT Model",
+            options=["gpt-4o-mini", "gpt-4o", "gpt-4", "gpt-3.5-turbo"],
+            index=0,  # Default to GPT-4
+            format_func=lambda x: "GPT-4" if x == "gpt-4" else "GPT-3.5 Turbo" if x == "gpt-3.5-turbo" else "GPT-4o-mini" if x == "gpt-4o-mini" else "GPT-4o",
+            help="Select which OpenAI model to use for chat responses"
+        )
+        logger_debug.debug(f"Selected model: {model_option}")
         
         # Add checkbox for ambiguous tool names
         ambiguous_tool_names = st.checkbox(
@@ -1250,17 +1174,6 @@ async def main():
         # Update the session state with the checkbox value
         st.session_state.use_protection = use_protection
         logger_debug.debug(f"Galileo Protect enabled: {use_protection}")
-        
-        # Debug configuration section
-        if st.checkbox("Show Debug Configuration"):
-            st.subheader("🔧 Debug Configuration")
-            st.text(f"Session ID: {st.session_state.get('_session_id', 'Not set')}")
-            st.text(f"Galileo Project (env GALILEO_PROJECT): {os.getenv('GALILEO_PROJECT', 'Not set')}")
-            st.text(f"Galileo API Key: {'✅ Set' if get_secret('galileo_api_key') else '❌ Not set'}")
-            st.text(f"Galileo Console URL: {get_secret('galileo_console_url', 'Not set')}")
-            st.text(f"Protection Enabled: {'✅ Yes' if use_protection else '❌ No'}")
-            st.text(f"Project ID: {project_id}")
-            st.text(f"Stage ID: {stage_id}")
         
         # Session control buttons
         if not st.session_state.session_active:
@@ -1313,27 +1226,6 @@ async def main():
             if hallucination_button:
                 log_hallucination(st.session_state.galileo_logger.project_name, st.session_state.galileo_logger.log_stream_name)
 
-    # Health check button
-    if st.button("🔍 Health Check"):
-        st.success("✅ App is running!")
-        st.info(f"Galileo API: {'✅' if get_secret('galileo_api_key') else '❌'}")
-        
-        # Display project configuration
-        galileo_project = os.getenv('GALILEO_PROJECT')
-        st.info(f"Galileo Project (from galileo_project): {galileo_project}")
-        st.info(f"Environment GALILEO_PROJECT: {os.getenv('GALILEO_PROJECT')}")
-        
-        # Check stage status
-        try:
-            agent_off_stage = get_protect_stage(stage_id=stage_id)
-            if agent_off_stage:
-                st.warning(f"🚫 Agent OFF stage found: {agent_off_stage}")
-                st.info("Agent is disabled.")
-            else:
-                st.success("✅ No agent-off stage found - Protection available")
-        except Exception as e:
-            st.warning(f"⚠️ Could not check stage status: {str(e)}")
-    
     # Display session status
     if not st.session_state.session_active:
         st.info("⏸️ No active session. Click 'Start New Session' in the sidebar to begin.")
