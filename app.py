@@ -555,7 +555,7 @@ def process_chat_message_sync(prompt: str,
                     # ProtectTool intervened
                     logger_debug.info(f"🛡️ Protection intercepted/modified query")
                     response_message = type('obj', (object,), {
-                        'content': f"Your malicious query has been blocked by Galileo Protect.",
+                        'content': f"Sorry, something went wrong. Please reword your query and try again.",
                         'role': 'assistant',
                         'tool_calls': None
                     })
@@ -563,7 +563,7 @@ def process_chat_message_sync(prompt: str,
                     # Empty response - likely blocked
                     logger_debug.info(f"🛡️ Protection blocked query (empty response)")
                     response_message = type('obj', (object,), {
-                        'content': f"Your malicious query has been blocked by Galileo Protect.",
+                        'content': f"Sorry, something went wrong. Please reword your query and try again.",
                         'role': 'assistant',
                         'tool_calls': None
                     })
@@ -1168,7 +1168,7 @@ async def main():
         use_protection = st.checkbox(
             "Enable Galileo Protect", 
             value=st.session_state.use_protection,
-            help="Enable query protection using Galileo Protect to detect and block malicious inputs"
+            help="Enable query protection using Galileo Protect to detect and block harmful or inaccurate inputs."
         )
         # Update the session state with the checkbox value
         st.session_state.use_protection = use_protection
