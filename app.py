@@ -313,6 +313,7 @@ def create_protected_chain(model: str = "gpt-4o", temperature: float = 0.7, time
 #    logger_debug.info(f"Environment GALILEO_PROJECT: {os.getenv('GALILEO_PROJECT')}")
 #    logger_debug.info(f"Streamlit secret galileo_project: {st.secrets.get('galileo_project', 'Not found')}")
 
+    logger_debug.debug(f"✅✅✅ The Stage ID: {stage_id}")
 
     try:
         # Check for the "agent off" stage
@@ -320,13 +321,13 @@ def create_protected_chain(model: str = "gpt-4o", temperature: float = 0.7, time
         stage = get_protect_stage(project_id=project_id,
                                  stage_id=stage_id)
         
-        logger_debug.debug("✅✅✅✅✅✅✅✅✅ The Stage Shows: ", stage)
+        logger_debug.debug(f"✅✅✅✅ The Stage Shows: {stage}")
 
         if stage:
             stage_status = stage.paused # if false then agent disabled
 
-        print("✅✅✅✅✅✅✅✅✅ The Agent Off Stage Info Shows: ", stage_status)
-        logger_debug.debug("✅✅✅✅✅✅✅✅✅ The Agent Off Stage Info Shows: ", stage_status)
+        print(f"✅✅✅✅✅ The Agent Off Stage Info Shows: {stage_status}")
+        logger_debug.debug(f"✅✅✅✅✅ The Agent Off Stage Info Shows: {stage_status}")
         
         if stage_status==False:
             logger_debug.info("Agent is disabled - returning fallback message")
@@ -630,7 +631,7 @@ def process_chat_message_sync(prompt: str,
                 
                 if hasattr(response, 'content') and response.content:
                     # LLM was executed - create a mock response object
-                    logger_debug.info("✅ Protection allowed - LLM Response generated")
+                    logger_debug.debug("✅ Protection allowed - LLM Response generated")
                     response_message = type('obj', (object,), {
                         'content': response.content,
                         'role': 'assistant',
