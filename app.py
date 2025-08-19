@@ -1128,11 +1128,8 @@ async def main():
                 help="The name of your Galileo log stream"
             )
 
-            galileo_api_key = st.text_input(
-                "Galileo API Key",
-                value=st.secrets["galileo_api_key"],
-                help="The API key for your Galileo project"
-            )
+            galileo_api_key = st.secrets["galileo_api_key"]
+            #galileo_api_key = get_secret("galileo_api_key", "")
 
             galileo_console_url = st.text_input(
                 "Galileo Console URL",
