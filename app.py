@@ -314,17 +314,19 @@ def create_protected_chain(model: str = "gpt-4o", temperature: float = 0.7, time
 #    logger_debug.info(f"Streamlit secret galileo_project: {st.secrets.get('galileo_project', 'Not found')}")
 
 
-    
-    # Check if specific stage exists and handle accordingly
     try:
         # Check for the "agent off" stage
         # Also check for specific stage ID
         stage = get_protect_stage(project_id=project_id,
                                  stage_id=stage_id)
+        
+        logger_debug.debug("✅✅✅✅✅✅✅✅✅ The Stage Shows: ", stage)
+
         if stage:
             stage_status = stage.paused # if false then agent disabled
 
-        print("The Agent Off Stage Info Shows: ", stage_status)
+        print("✅✅✅✅✅✅✅✅✅ The Agent Off Stage Info Shows: ", stage_status)
+        logger_debug.debug("✅✅✅✅✅✅✅✅✅ The Agent Off Stage Info Shows: ", stage_status)
         
         if stage_status==False:
             logger_debug.info("Agent is disabled - returning fallback message")
