@@ -32,7 +32,7 @@ os.environ["GALILEO_API_KEY"] = st.secrets["galileo_api_key"]
 os.environ["GALILEO_PROJECT"] = st.secrets["galileo_project"]
 os.environ["GALILEO_LOG_STREAM_NAME"] = st.secrets["galileo_log_stream"]
 os.environ["GALILEO_CONSOLE_URL"] = st.secrets["galileo_console_url"]
-os.environ["OPEN_AI_APIKEY"] = st.secrets["openai_api_key"]
+os.environ["OPENAI_API_KEY"] = st.secrets["openai_api_key"]
 
 # Initialize OpenAI client
 logger_debug.info("Initializing OpenAI client")
