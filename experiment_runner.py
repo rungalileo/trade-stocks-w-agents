@@ -16,10 +16,8 @@ logger = logging.getLogger(__name__)
 # Load environment variables
 load_dotenv()
 
-os.environ["GALILEO_API_KEY"] = st.secrets["galileo_api_key"]
-os.environ["GALILEO_PROJECT_NAME"] = st.secrets["galileo_project"]
-os.environ["GALILEO_LOG_STREAM_NAME"] = st.secrets["galileo_log_stream"]
-os.environ["GALILEO_CONSOLE_URL"] = st.secrets["galileo_console_url"]
+# Note: Environment variables should be set before running this script
+# GALILEO_API_KEY, GALILEO_PROJECT_NAME, GALILEO_LOG_STREAM_NAME, GALILEO_CONSOLE_URL
 
 def process_trade_prompt(example):
     """
@@ -72,7 +70,7 @@ def process_trade_prompt(example):
 
 def main():
     # Ensure required environment variables are set
-    required_vars = ["GALILEO_API_KEY", "GALILEO_PROJECT_NAME", "OPENAI_API_KEY"]
+    required_vars = ["GALILEO_API_KEY", "GALILEO_PROJECT", "OPENAI_API_KEY"]
     missing_vars = [var for var in required_vars if not os.getenv(var)]
     
     if missing_vars:
@@ -80,7 +78,7 @@ def main():
         return
     
     # Get project name from environment
-    galileo_project = os.getenv("GALILEO_PROJECT_NAME")
+    galileo_project = os.getenv("GALILEO_PROJECT")
     
     try:
         # Get the dataset

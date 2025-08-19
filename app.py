@@ -3,6 +3,7 @@ import json
 import streamlit as st
 import time
 import logging
+import uuid
 from typing import List, Dict, Any, Optional
 from pinecone import Pinecone, ServerlessSpec
 from openai import OpenAI
@@ -10,6 +11,23 @@ from urllib.parse import unquote
 from galileo_api_helper import get_galileo_project_id, get_galileo_log_stream_id, list_galileo_experiments, delete_all_galileo_experiments
 from chat_lib.galileo_logger import initialize_galileo_logger
 import copy
+
+# Import Galileo Protect functionality
+from galileo.handlers.langchain import GalileoCallback
+from galileo.handlers.langchain.tool import ProtectTool, ProtectParser
+from galileo_core.schemas.protect.ruleset import Ruleset
+from galileo_core.schemas.protect.action import OverrideAction
+from galileo.projects import get_project
+
+from langchain_openai import ChatOpenAI
+
+from galileo.stages import (
+    create_protect_stage,
+    get_protect_stage,
+    pause_protect_stage,
+    resume_protect_stage,
+    StageType
+)
 
 # Import tools
 from log_hallucination import log_hallucination
@@ -22,24 +40,59 @@ from tools.sell_stocks import sell_stocks
 logging.basicConfig(level=logging.DEBUG)
 logger_debug = logging.getLogger(__name__)
 
-os.environ["GALILEO_API_KEY"] = st.secrets["galileo_api_key"]
-os.environ["GALILEO_PROJECT_NAME"] = st.secrets["galileo_project"]
-os.environ["GALILEO_LOG_STREAM_NAME"] = st.secrets["galileo_log_stream"]
-os.environ["GALILEO_CONSOLE_URL"] = st.secrets["galileo_console_url"]
+# Environment variable fallbacks for production
+def get_secret(key, default=None):
+    """Get secret from st.secrets or environment variable."""
+    try:
+        return st.secrets[key]
+    except:
+        return os.getenv(key, default)
+
+# Set environment variables with fallbacks
+project_name = "service-now-poc"
+os.environ["GALILEO_API_KEY"] = get_secret("galileo_api_key", os.getenv("GALILEO_API_KEY"))
+os.environ["GALILEO_PROJECT"] = project_name
+os.environ["GALILEO_LOG_STREAM_NAME"] = get_secret("galileo_log_stream", os.getenv("GALILEO_LOG_STREAM_NAME"))
+os.environ["GALILEO_CONSOLE_URL"] = get_secret("galileo_console_url", os.getenv("GALILEO_CONSOLE_URL"))
+stage_id = "b838735c-096e-4f41-bac6-202c63d6cbe9"
+project = get_project(name=project_name)
+project_id = project.id
+
+# Print configuration for debugging
+print("=" * 60)
+print("🚀 FINANCE CHAT APP STARTUP CONFIGURATION")
+print("=" * 60)
+print(f"Galileo Project (GALILEO_PROJECT): {os.getenv('GALILEO_PROJECT', 'Not set')}")
+print(f"Galileo API Key: {'✅ Set' if os.getenv('GALILEO_API_KEY') else '❌ Not set'}")
+print(f"Galileo Console URL: {os.getenv('GALILEO_CONSOLE_URL', 'Not set')}")
+print(f"OpenAI API Key: {'✅ Set' if get_secret('openai_api_key', os.getenv('OPENAI_API_KEY')) else '❌ Not set'}")
+print(f"Pinecone API Key: {'✅ Set' if get_secret('pinecone_api_key', os.getenv('PINECONE_API_KEY')) else '❌ Not set'}")
+print(f"Pinecone Index: {get_secret('pinecone_index_name', os.getenv('PINECONE_INDEX_NAME', 'Not set'))}")
+print("=" * 60)
 # Initialize OpenAI client
 logger_debug.info("Initializing OpenAI client")
-openai_client = OpenAI(
-    api_key=st.secrets["openai_api_key"]
-)
-logger_debug.debug(f"OpenAI API Key loaded: {'*' * 8}{st.secrets['openai_api_key'][-4:] if st.secrets['openai_api_key'] else 'Not found'}")
+openai_api_key = get_secret("openai_api_key", os.getenv("OPENAI_API_KEY"))
+if not openai_api_key:
+    logger_debug.error("OpenAI API key not found in secrets or environment variables")
+    st.error("OpenAI API key not configured. Please set OPENAI_API_KEY environment variable.")
+    st.stop()
+
+openai_client = OpenAI(api_key=openai_api_key)
+logger_debug.debug(f"OpenAI API Key loaded: {'*' * 8}{openai_api_key[-4:] if openai_api_key else 'Not found'}")
 
 # Initialize Pinecone
 logger_debug.info("Initializing Pinecone client")
+pinecone_api_key = get_secret("pinecone_api_key", os.getenv("PINECONE_API_KEY"))
+if not pinecone_api_key:
+    logger_debug.error("Pinecone API key not found in secrets or environment variables")
+    st.error("Pinecone API key not configured. Please set PINECONE_API_KEY environment variable.")
+    st.stop()
+
 pc = Pinecone(
-    api_key=st.secrets["pinecone_api_key"],
+    api_key=pinecone_api_key,
     spec=ServerlessSpec(cloud="aws", region="us-west-2")
 )
-logger_debug.debug(f"Pinecone API Key loaded: {'*' * 8}{st.secrets['pinecone_api_key'][-4:] if st.secrets['pinecone_api_key'] else 'Not found'}")
+logger_debug.debug(f"Pinecone API Key loaded: {'*' * 8}{pinecone_api_key[-4:] if pinecone_api_key else 'Not found'}")
 
 # Define RAG response type
 class RagResponse:
@@ -61,10 +114,10 @@ def get_rag_response(query: str, namespace: str, top_k: int) -> Optional[RagResp
         logger_debug.debug(f"Generated embedding of length: {len(query_embedding)}")
         
         # Initialize Pinecone index
-        index_name = st.secrets["pinecone_index_name"]
+        index_name = get_secret("pinecone_index_name", os.getenv("PINECONE_INDEX_NAME"))
         logger_debug.debug(f"Using Pinecone index: {index_name}")
         if not index_name:
-            logger_debug.error("PINECONE_INDEX_NAME environment variable is not set")
+            logger_debug.error("PINECONE_INDEX_NAME not found in secrets or environment variables")
             return None
             
         index = pc.Index(index_name)
@@ -233,6 +286,92 @@ AMBIGUOUS_PARAMETER_DESCRIPTIONS = {
     }
 }
 
+def create_protected_chain(model: str = "gpt-4o", temperature: float = 0.7, timeout: int = 10):
+    """Create a protected chain using Galileo Protect.
+    
+    Args:
+        model: The OpenAI model to use
+        temperature: The temperature for the model
+        timeout: Timeout for the protect tool
+        
+    Returns:
+        A tuple of (protected_chain, galileo_callback)
+    """
+    logger_debug.info(f"Creating protected chain with model: {model}, timeout: {timeout}")
+    
+    # Create a callback handler
+    galileo_callback = GalileoCallback()
+    
+    # Create LangChain LLM
+    llm = ChatOpenAI(model=model, temperature=temperature)
+    
+    # Get project name with detailed logging
+    project_name = os.getenv("GALILEO_PROJECT")
+    
+#    stage_id = os.getenv("GALILEO_PROJECT", st.secrets.get("galileo_project", "default"))
+    logger_debug.info(f"Using Galileo project: {project_name}")
+#    logger_debug.info(f"Environment GALILEO_PROJECT: {os.getenv('GALILEO_PROJECT')}")
+#    logger_debug.info(f"Streamlit secret galileo_project: {st.secrets.get('galileo_project', 'Not found')}")
+
+
+    
+    # Check if specific stage exists and handle accordingly
+    try:
+        # Check for the "agent off" stage
+        # Also check for specific stage ID
+        stage = get_protect_stage(project_id=project_id,
+                                 stage_id=stage_id)
+        if stage:
+            stage_status = stage.paused # if false then agent disabled
+
+        print("The Agent Off Stage Info Shows: ", stage_status)
+        
+        if stage_status==False:
+            logger_debug.info("Agent is disabled - returning fallback message")
+            
+            class AgentOffChain:
+                def __init__(self):
+                    self.content = "Sorry, this agent has been disabled."
+                
+                def invoke(self, input_data, config=None):
+                    class MockResponse:
+                        def __init__(self):
+                            self.content = "Sorry, this agent has been disabled."
+                    return MockResponse()
+            
+            return AgentOffChain(), galileo_callback
+        else:
+            logger_debug.info("Agent enabled.")
+            
+    except Exception as e:
+        logger_debug.warning(f"Error checking for agent-off stage: {str(e)}")
+        logger_debug.info("Proceeding with protection due to stage check error")
+    
+    # Create a ProtectParser instance, passing the LLM as the chain to be invoked
+    protect_parser = ProtectParser(chain=llm)
+    protect_tool = ProtectTool(
+        stage_name="service-now-poc-stage-01bd",
+        project_name=project_name,
+        prioritized_rulesets=[
+            Ruleset(rules=[
+                {
+                    "metric": "context_adherence_luna", # context_adherence_luna, prompt_injection, pii
+                    "operator": "gt", # gt, eq, contains
+                    "target_value": 0, # 0.6, new_context, address
+                },
+            ]),
+        ],
+        action=OverrideAction(
+            choices=["Sorry, Galileo has detected a hallucination in the model output. I cannot answer that question."],
+        timeout=timeout
+        ))
+    
+    # Define the chain with Protect
+    protected_chain = protect_tool | protect_parser.parser
+    
+    logger_debug.info("Protected chain created successfully")
+    return protected_chain, galileo_callback
+
 # Format tools for OpenAI API
 openai_tools = [
     {
@@ -346,7 +485,8 @@ async def process_chat_message(
     top_k: int = 3,
     galileo_logger = None,
     is_streamlit=True,
-    ambiguous_tool_names: bool = False
+    ambiguous_tool_names: bool = False,
+    use_protection: bool = True
 ) -> Dict[str, Any]:
     """Process a chat message independently of Streamlit UI.
     
@@ -361,6 +501,7 @@ async def process_chat_message(
         galileo_logger: Optional Galileo logger for observability
         is_streamlit: Whether to use Streamlit-specific code
         ambiguous_tool_names: Whether to use ambiguous tool names
+        use_protection: Whether to use Galileo Protect for query protection
 
     Returns:
         Dict containing:
@@ -378,7 +519,8 @@ async def process_chat_message(
         top_k=top_k,
         galileo_logger=galileo_logger,
         is_streamlit=is_streamlit,
-        ambiguous_tool_names=ambiguous_tool_names
+        ambiguous_tool_names=ambiguous_tool_names,
+        use_protection=use_protection
     )
 
 def process_chat_message_sync(prompt: str,
@@ -390,7 +532,8 @@ def process_chat_message_sync(prompt: str,
     top_k: int = 3,
     galileo_logger = None,
     is_streamlit=True,
-    ambiguous_tool_names: bool = False) -> Dict[str, Any]:
+    ambiguous_tool_names: bool = False,
+    use_protection: bool = True) -> Dict[str, Any]:
     start_time = time.time()
     logger_debug.info(f"Processing chat message: {prompt}")
     
@@ -441,7 +584,7 @@ def process_chat_message_sync(prompt: str,
                 messages_to_use = [
                     {
                         "role": "system",
-                        "content": f"{system_prompt}\n\nHere is the relevant context that you should use to answer the user's questions:\n\n{context}\n\nMake sure to use this context when answering questions."
+                        "content": f"{system_prompt}\n\nHere is the relevant context that you should use to answer the user's questions:\n\n{context}\n\nMake sure to use this context when answering questions. If you don't know, make something up. When someone asks if they should buy a stock, enthusiastically answer that they should or should not. Give a strong opinion."
                     },
                     *messages_to_use
                 ]
@@ -459,55 +602,334 @@ def process_chat_message_sync(prompt: str,
                 *messages_to_use
             ]
         
-        # Get response from OpenAI
-        logger_debug.info(f"Calling OpenAI API with model {model}")
-        logger_debug.debug(f"Messages being sent to OpenAI: {json.dumps([format_message(msg['role'], msg['content']) for msg in messages_to_use], indent=2)}")
+        # Check if we need to use protection
+        if use_protection:
+            logger_debug.info("Using Galileo Protect for query protection")
+            try:
+                # Create protected chain
+                protected_chain, galileo_callback = create_protected_chain(model=model)
+                
+                # Prepare input for protected chain
+                chain_input = {"input": prompt}
+                
+                # Run through protected chain
+                response = protected_chain.invoke(
+                    chain_input,
+                    config={"callbacks": [galileo_callback]}
+                )
+
+                print("Response:", response) # does this respond with/ what?
+                logger_debug.info(f"Response: {response}")
+                
+
+                # Handle protected response
+                logger_debug.info(f"Protection response type: {type(response)}")
+                logger_debug.info(f"Protection response content: {response}")
+                
+                if hasattr(response, 'content') and response.content:
+                    # LLM was executed - create a mock response object
+                    logger_debug.info("✅ Protection allowed - LLM Response generated")
+                    response_message = type('obj', (object,), {
+                        'content': response.content,
+                        'role': 'assistant',
+                        'tool_calls': None
+                    })
+                elif isinstance(response, str):
+                    # ProtectTool intervened
+                    logger_debug.info(f"🛡️ Protection intercepted/modified query")
+                    response_message = type('obj', (object,), {
+                        'content': f"Malicious query detected. This query has been blocked by Galileo Protect.",
+                        'role': 'assistant',
+                        'tool_calls': None
+                    })
+                elif hasattr(response, 'content') and not response.content:
+                    # Empty response - likely blocked
+                    logger_debug.info(f"🛡️ Protection blocked query (empty response)")
+                    response_message = type('obj', (object,), {
+                        'content': f"Malicious query detected. This query has been blocked by Galileo Protect.",
+                        'role': 'assistant',
+                        'tool_calls': None
+                    })
+                else:
+                    # Unexpected response type
+                    logger_debug.warning(f"❓ Unexpected protection response type: {type(response)}")
+                    response_message = type('obj', (object,), {
+                        'content': "I encountered an error processing your request.",
+                        'role': 'assistant',
+                        'tool_calls': None
+                    })
+                
+                # Skip tool processing for protected responses
+                tool_results = []
+                
+                # Calculate token counts for protected response
+                input_tokens = len(prompt.split()) if prompt else 0
+                output_tokens = len(response_message.content.split()) if response_message.content else 0
+                total_tokens = input_tokens + output_tokens
+                
+            except Exception as e:
+                logger_debug.error(f"Error in protection chain: {str(e)}", exc_info=True)
+                # Fall back to regular processing
+                use_protection = False
+                logger_debug.info("Falling back to regular processing due to protection error")
+                logger_debug.info(f"Error details: {type(e).__name__}: {str(e)}")
         
-        # Check if we need to use ambiguous tool names
-        tools_to_use = openai_tools
-        if ambiguous_tool_names:
-            logger_debug.info("Using ambiguous tool names")
-            tools_to_use = []
+        # Regular processing (if not using protection or protection failed)
+        if not use_protection:
+            # Get response from OpenAI
+            logger_debug.info(f"Calling OpenAI API with model {model}")
+            logger_debug.debug(f"Messages being sent to OpenAI: {json.dumps([format_message(msg['role'], msg['content']) for msg in messages_to_use], indent=2)}")
             
-            for tool in openai_tools:
-                function_name = tool["function"]["name"]
-                function_desc = tool["function"]["description"]
-                function_params = tool["function"]["parameters"]
+            # Check if we need to use ambiguous tool names
+            tools_to_use = openai_tools
+            if ambiguous_tool_names:
+                logger_debug.info("Using ambiguous tool names")
+                tools_to_use = []
                 
-                # Create a copy of the tool
-                modified_tool = {
-                    "type": "function",
-                    "function": {
-                        "name": function_name,
-                        "description": function_desc,
-                        "parameters": copy.deepcopy(function_params)
-                    }
-                }
-                
-                # Modify tools with ambiguous names and descriptions
-                if function_name in AMBIGUOUS_TOOL_NAMES:
-                    ambiguous_name = AMBIGUOUS_TOOL_NAMES[function_name]
-                    modified_tool["function"]["name"] = ambiguous_name
-                    modified_tool["function"]["description"] = AMBIGUOUS_TOOL_DESCRIPTIONS[ambiguous_name]
+                for tool in openai_tools:
+                    function_name = tool["function"]["name"]
+                    function_desc = tool["function"]["description"]
+                    function_params = tool["function"]["parameters"]
                     
-                    # Change parameter descriptions to be ambiguous
-                    for param_name in modified_tool["function"]["parameters"]["properties"]:
-                        if param_name in AMBIGUOUS_PARAMETER_DESCRIPTIONS[ambiguous_name]:
-                            modified_tool["function"]["parameters"]["properties"][param_name]["description"] = \
-                                AMBIGUOUS_PARAMETER_DESCRIPTIONS[ambiguous_name][param_name]
+                    # Create a copy of the tool
+                    modified_tool = {
+                        "type": "function",
+                        "function": {
+                            "name": function_name,
+                            "description": function_desc,
+                            "parameters": copy.deepcopy(function_params)
+                        }
+                    }
+                    
+                    # Modify tools with ambiguous names and descriptions
+                    if function_name in AMBIGUOUS_TOOL_NAMES:
+                        ambiguous_name = AMBIGUOUS_TOOL_NAMES[function_name]
+                        modified_tool["function"]["name"] = ambiguous_name
+                        modified_tool["function"]["description"] = AMBIGUOUS_TOOL_DESCRIPTIONS[ambiguous_name]
+                        
+                        # Change parameter descriptions to be ambiguous
+                        for param_name in modified_tool["function"]["parameters"]["properties"]:
+                            if param_name in AMBIGUOUS_PARAMETER_DESCRIPTIONS[ambiguous_name]:
+                                modified_tool["function"]["parameters"]["properties"][param_name]["description"] = \
+                                    AMBIGUOUS_PARAMETER_DESCRIPTIONS[ambiguous_name][param_name]
+                    
+                    tools_to_use.append(modified_tool)
+            
+            logger_debug.debug(f"Tools being sent to OpenAI: {json.dumps(tools_to_use, indent=2)}")
+            
+            response = openai_client.chat.completions.create(
+                model=model,
+                messages=messages_to_use,
+                tools=tools_to_use,
+                tool_choice="auto"
+            )
+            
+            response_message = response.choices[0].message
+            logger_debug.info("Received response from OpenAI")
+            
+            # Calculate token counts safely
+            input_tokens = len(prompt.split()) if prompt else 0
+            output_tokens = len(response_message.content.split()) if response_message.content else 0
+            total_tokens = input_tokens + output_tokens
+            
+            # Log the API call to Galileo if available
+            if galileo_logger:
+                logger_debug.info("Logging API call to Galileo")
                 
-                tools_to_use.append(modified_tool)
-        
-        logger_debug.debug(f"Tools being sent to OpenAI: {json.dumps(tools_to_use, indent=2)}")
-        
-        response = openai_client.chat.completions.create(
-            model=model,
-            messages=messages_to_use,
-            tools=tools_to_use,
-            tool_choice="auto"
-        )
-        
-        response_message = response.choices[0].message
+                # Prepare tools list for logging
+                tools_for_logging = []
+                for name, tool in tools.items():
+                    # Determine the tool name based on whether ambiguous names are enabled
+                    tool_name = name
+                    if ambiguous_tool_names:
+                        if name in AMBIGUOUS_TOOL_NAMES:
+                            tool_name = AMBIGUOUS_TOOL_NAMES[name]
+                    
+                    tools_for_logging.append({
+                        "name": tool_name,
+                        "parameters": list(tool["parameters"]["properties"].keys())
+                    })
+                
+                galileo_logger.add_llm_span(
+                    input=[format_message(msg["role"], msg["content"]) for msg in messages_to_use],
+                    output={
+                        "role": response_message.role,
+                        "content": response_message.content,
+                        "tool_calls": [
+                            {
+                                "id": call.id,
+                                "type": call.type,
+                                "function": {
+                                    "name": call.function.name,
+                                    "arguments": call.function.arguments
+                                }
+                            } for call in (response_message.tool_calls or [])
+                        ] if response_message.tool_calls else None
+                    },
+                    model=model,
+                    name="OpenAI API Call",
+                    tools=tools_for_logging,
+                    duration_ns=int((time.time() - start_time) * 1000000),
+                    metadata={"temperature": "0.7", "model": model},
+                    tags=["api-call"],
+                    num_input_tokens=input_tokens,
+                    num_output_tokens=output_tokens,
+                    total_tokens=total_tokens
+                )
+            
+            # Handle tool calls if present
+            tool_results = []
+            if response_message.tool_calls:
+                logger_debug.info("Processing tool calls")
+                continue_conversation = True
+                
+                while continue_conversation and response_message.tool_calls:
+                    current_tool_calls = []
+                    
+                    # Process each tool call and its response
+                    for tool_call in response_message.tool_calls:
+                        tool_result = None
+                        original_function_name = tool_call.function.name
+                        
+                        # Map ambiguous tool names back to the original function names
+                        if ambiguous_tool_names:
+                            # Create a reverse mapping of ambiguous tool names to original names
+                            ambiguous_to_original = {v: k for k, v in AMBIGUOUS_TOOL_NAMES.items()}
+                            
+                            if original_function_name in ambiguous_to_original:
+                                original_function_name = ambiguous_to_original[original_function_name]
+                                logger_debug.info(f"Mapping ambiguous tool name '{tool_call.function.name}' to '{original_function_name}'")
+                        
+                        if original_function_name == "getTickerSymbol":
+                            company = json.loads(tool_call.function.arguments)["company"]
+                            ticker = get_ticker_symbol(company, galileo_logger)
+                            logger_debug.info(f"Got ticker symbol for {company}: {ticker}")
+                            tool_result = ticker
+                            description = f"Looking up ticker symbol for {company}..."
+                            
+                        elif original_function_name == "getStockPrice":
+                            ticker = json.loads(tool_call.function.arguments)["ticker"]
+                            result = get_stock_price(ticker, galileo_logger=galileo_logger)
+                            logger_debug.info(f"Got stock price for {ticker}")
+                            tool_result = result
+                            description = f"Getting current price for {ticker}..."
+                            
+                        elif original_function_name == "purchaseStocks":
+                            args = json.loads(tool_call.function.arguments)
+                            result = purchase_stocks(
+                                ticker=args["ticker"],
+                                quantity=args["quantity"],
+                                price=args["price"],
+                                galileo_logger=galileo_logger
+                            )
+                            logger_debug.info(f"Processed stock purchase for {args['ticker']}")
+                            tool_result = result
+                            description = f"Processing purchase of {args['quantity']} shares of {args['ticker']}..."
+                        elif original_function_name == "sellStocks":
+                            args = json.loads(tool_call.function.arguments)
+                            result = sell_stocks(
+                                ticker=args["ticker"],
+                                quantity=args["quantity"],
+                                price=args["price"],
+                                galileo_logger=galileo_logger
+                            )
+                            logger_debug.info(f"Processed stock sale for {args['ticker']}")
+                            
+                            # Handle tool call and response
+                            handle_tool_call(
+                                tool_call=tool_call,
+                                tool_result=result,
+                                description=f"Processing sale of {args['quantity']} shares of {args['ticker']}...",
+                                messages_to_use=messages_to_use,
+                                logger=galileo_logger,
+                                is_streamlit=is_streamlit
+                            )
+                        if tool_result:
+                            # Create tool call data for tracking
+                            current_tool_calls.append({
+                                "tool_call": tool_call,
+                                "result": tool_result,
+                                "description": description
+                            })
+                            
+                            # Add tool call and response to messages
+                            messages_to_use.append({
+                                "role": "assistant",
+                                "content": None,
+                                "tool_calls": [{
+                                    "id": tool_call.id,
+                                    "type": "function",
+                                    "function": {
+                                        "name": tool_call.function.name,
+                                        "arguments": tool_call.function.arguments
+                                    }
+                                }]
+                            })
+                            
+                            messages_to_use.append({
+                                "role": "tool",
+                                "tool_call_id": tool_call.id,
+                                "content": tool_result
+                            })
+                            
+                            # Track all tool results for return
+                            tool_results.append({
+                                "name": tool_call.function.name,
+                                "arguments": json.loads(tool_call.function.arguments),
+                                "result": tool_result,
+                                "description": description
+                            })
+                    
+                    # Get a new response from OpenAI with the tool results
+                    logger_debug.info("Getting follow-up response with tool results")
+                    follow_up_response = openai_client.chat.completions.create(
+                        model=model,
+                        messages=messages_to_use,
+                        tools=tools_to_use,
+                        tool_choice="auto"
+                    )
+                    
+                    response_message = follow_up_response.choices[0].message
+                    logger_debug.debug(f"Received follow-up response from OpenAI")
+                    
+                    # Calculate token counts for follow-up response
+                    follow_up_input_tokens = sum(len(msg.get("content", "").split()) for msg in messages_to_use if msg.get("content"))
+                    follow_up_output_tokens = len(response_message.content.split()) if response_message.content else 0
+                    follow_up_total_tokens = follow_up_input_tokens + follow_up_output_tokens
+                    
+                    # Log the follow-up API call to Galileo if available
+                    if galileo_logger:
+                        logger_debug.info("Logging follow-up API call to Galileo")
+                        galileo_logger.add_llm_span(
+                            input=[format_message(msg["role"], msg["content"]) for msg in messages_to_use],
+                            output={
+                                "role": response_message.role,
+                                "content": response_message.content,
+                                "tool_calls": [
+                                    {
+                                        "id": call.id,
+                                        "type": call.type,
+                                        "function": {
+                                            "name": call.function.name,
+                                            "arguments": call.function.arguments
+                                        }
+                                    } for call in (response_message.tool_calls or [])
+                                ] if response_message.tool_calls else None
+                            },
+                            model=model,
+                            name="Follow-up OpenAI API Call",
+                            tools=tools_for_logging,
+                            duration_ns=int((time.time() - start_time) * 1000000),
+                            metadata={"temperature": "0.7", "model": model},
+                            tags=["api-call", "follow-up"],
+                            num_input_tokens=follow_up_input_tokens,
+                            num_output_tokens=follow_up_output_tokens,
+                            total_tokens=follow_up_total_tokens
+                        )
+                    
+                    # If no more tool calls, end the conversation
+                    if not response_message.tool_calls:
+                        continue_conversation = False
         logger_debug.info("Received response from OpenAI")
         
         # Calculate token counts safely
@@ -757,8 +1179,11 @@ async def main():
     logger_debug.info("Starting Streamlit application")
     
     # Get query parameters
-    default_project = unquote(st.query_params.get("project", st.secrets["galileo_project"]))
-    default_log_stream = unquote(st.query_params.get("log_stream", st.secrets["galileo_log_stream"]))
+    default_project = os.getenv('GALILEO_PROJECT')
+    stage_id = "b838735c-096e-4f41-bac6-202c63d6cbe9"
+    project = get_project(name=default_project)
+    project_id = project.id
+    default_log_stream = unquote(st.query_params.get("log_stream", get_secret("galileo_log_stream", "default")))
     
     # Initialize session state variables if not present
     if "messages" not in st.session_state:
@@ -773,6 +1198,10 @@ async def main():
     if "ambiguous_tool_names" not in st.session_state:
         st.session_state.ambiguous_tool_names = False
     
+    # Initialize session ID for external tracking
+    if "_session_id" not in st.session_state:
+        st.session_state._session_id = str(uuid.uuid4())
+    
     # Sidebar for configuration
     with st.sidebar:
         st.header("Configuration")
@@ -780,40 +1209,20 @@ async def main():
         if not "galileo_logger" in st.session_state:
             # Add Galileo configuration fields
             st.subheader("Galileo Configuration")
-            galileo_project = st.text_input(
-                "Galileo Project",
-                value=default_project,
-                help="The name of your Galileo project"
-            )
+            galileo_project = default_project  # Use the default project from environment
             galileo_log_stream = st.text_input(
                 "Galileo Log Stream",
                 value=default_log_stream,
                 help="The name of your Galileo log stream"
             )
 
-            galileo_api_key = st.text_input(
-                "Galileo API Key",
-                value=st.secrets["galileo_api_key"],
-                help="The API key for your Galileo project"
-            )
-
-            galileo_console_url = st.text_input(
-                "Galileo Console URL",
-                value=st.secrets["galileo_console_url"],
-                help="The URL of your Galileo console"
-            )
+            galileo_api_key = get_secret("galileo_api_key", "")  # Get from secrets/environment
+            galileo_console_url = get_secret("galileo_console_url", "")  # Get from secrets/environment
         
 
-        # Add model selection dropdown
-        st.subheader("Model Configuration")
-        model_option = st.selectbox(
-            "Select GPT Model",
-            options=["gpt-4", "gpt-3.5-turbo"],
-            index=0,  # Default to GPT-4
-            format_func=lambda x: "GPT-4" if x == "gpt-4" else "GPT-3.5 Turbo",
-            help="Select which OpenAI model to use for chat responses"
-        )
-        logger_debug.debug(f"Selected model: {model_option}")
+        # Model configuration - use default model
+        model_option = "gpt-4o-mini"  # Default model
+        logger_debug.debug(f"Using default model: {model_option}")
         
         # Add checkbox for ambiguous tool names
         ambiguous_tool_names = st.checkbox(
@@ -824,6 +1233,30 @@ async def main():
         # Update the session state with the checkbox value
         st.session_state.ambiguous_tool_names = ambiguous_tool_names
         logger_debug.debug(f"Ambiguous tool names: {ambiguous_tool_names}")
+        
+        # Add checkbox for Galileo Protect
+        if "use_protection" not in st.session_state:
+            st.session_state.use_protection = True
+            
+        use_protection = st.checkbox(
+            "Enable Galileo Protect", 
+            value=st.session_state.use_protection,
+            help="Enable query protection using Galileo Protect to detect and block malicious inputs"
+        )
+        # Update the session state with the checkbox value
+        st.session_state.use_protection = use_protection
+        logger_debug.debug(f"Galileo Protect enabled: {use_protection}")
+        
+        # Debug configuration section
+        if st.checkbox("Show Debug Configuration"):
+            st.subheader("🔧 Debug Configuration")
+            st.text(f"Session ID: {st.session_state.get('_session_id', 'Not set')}")
+            st.text(f"Galileo Project (env GALILEO_PROJECT): {os.getenv('GALILEO_PROJECT', 'Not set')}")
+            st.text(f"Galileo API Key: {'✅ Set' if get_secret('galileo_api_key') else '❌ Not set'}")
+            st.text(f"Galileo Console URL: {get_secret('galileo_console_url', 'Not set')}")
+            st.text(f"Protection Enabled: {'✅ Yes' if use_protection else '❌ No'}")
+            st.text(f"Project ID: {project_id}")
+            st.text(f"Stage ID: {stage_id}")
         
         # Session control buttons
         if not st.session_state.session_active:
@@ -876,6 +1309,27 @@ async def main():
             if hallucination_button:
                 log_hallucination(st.session_state.galileo_logger.project_name, st.session_state.galileo_logger.log_stream_name)
 
+    # Health check button
+    if st.button("🔍 Health Check"):
+        st.success("✅ App is running!")
+        st.info(f"Galileo API: {'✅' if get_secret('galileo_api_key') else '❌'}")
+        
+        # Display project configuration
+        galileo_project = os.getenv('GALILEO_PROJECT')
+        st.info(f"Galileo Project (from galileo_project): {galileo_project}")
+        st.info(f"Environment GALILEO_PROJECT: {os.getenv('GALILEO_PROJECT')}")
+        
+        # Check stage status
+        try:
+            agent_off_stage = get_protect_stage(stage_id=stage_id)
+            if agent_off_stage:
+                st.warning(f"🚫 Agent OFF stage found: {agent_off_stage}")
+                st.info("Agent is disabled.")
+            else:
+                st.success("✅ No agent-off stage found - Protection available")
+        except Exception as e:
+            st.warning(f"⚠️ Could not check stage status: {str(e)}")
+    
     # Display session status
     if not st.session_state.session_active:
         st.info("⏸️ No active session. Click 'Start New Session' in the sidebar to begin.")
@@ -923,7 +1377,8 @@ async def main():
                     top_k=top_k,
                     galileo_logger=st.session_state.galileo_logger,
                     is_streamlit=True,
-                    ambiguous_tool_names=st.session_state.ambiguous_tool_names
+                    ambiguous_tool_names=st.session_state.ambiguous_tool_names,
+                    use_protection=st.session_state.use_protection
                 )
                 
                 # Update the message history
