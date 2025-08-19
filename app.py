@@ -54,6 +54,7 @@ os.environ["GALILEO_API_KEY"] = get_secret("galileo_api_key", os.getenv("GALILEO
 os.environ["GALILEO_PROJECT"] = project_name
 os.environ["GALILEO_LOG_STREAM_NAME"] = get_secret("galileo_log_stream", os.getenv("GALILEO_LOG_STREAM_NAME"))
 os.environ["GALILEO_CONSOLE_URL"] = get_secret("galileo_console_url", os.getenv("GALILEO_CONSOLE_URL"))
+os.environ["OPENAI_API_KEY"] = get_secret("openai_api_key", ":(")
 stage_id = "b838735c-096e-4f41-bac6-202c63d6cbe9"
 project = get_project(name=project_name)
 project_id = project.id
@@ -599,7 +600,7 @@ def process_chat_message_sync(prompt: str,
                         *messages_to_use
                     ]
         elif system_prompt:
-            logger_debug.info("Adding system prompt without RAG")
+            logger_debug.debug("Adding system prompt without RAG")
             messages_to_use = [
                 {"role": "system", "content": system_prompt},
                 *messages_to_use
@@ -607,7 +608,7 @@ def process_chat_message_sync(prompt: str,
         
         # Check if we need to use protection
         if use_protection:
-            logger_debug.info("Using Galileo Protect for query protection")
+            logger_debug.debug("Using Galileo Protect for query protection")
             try:
                 # Create protected chain
                 protected_chain, galileo_callback = create_protected_chain(model=model)
@@ -622,12 +623,12 @@ def process_chat_message_sync(prompt: str,
                 )
 
                 print("Response:", response) # does this respond with/ what?
-                logger_debug.info(f"Response: {response}")
+                logger_debug.debug(f"Response: {response}")
                 
 
                 # Handle protected response
-                logger_debug.info(f"Protection response type: {type(response)}")
-                logger_debug.info(f"Protection response content: {response}")
+                logger_debug.debug(f"Protection response type: {type(response)}")
+                logger_debug.debug(f"Protection response content: {response}")
                 
                 if hasattr(response, 'content') and response.content:
                     # LLM was executed - create a mock response object
@@ -639,7 +640,7 @@ def process_chat_message_sync(prompt: str,
                     })
                 elif isinstance(response, str):
                     # ProtectTool intervened
-                    logger_debug.info(f"🛡️ Protection intercepted/modified query")
+                    logger_debug.debug(f"🛡️ Protection intercepted/modified query")
                     response_message = type('obj', (object,), {
                         'content': f"Malicious query detected. This query has been blocked by Galileo Protect.",
                         'role': 'assistant',
@@ -647,7 +648,7 @@ def process_chat_message_sync(prompt: str,
                     })
                 elif hasattr(response, 'content') and not response.content:
                     # Empty response - likely blocked
-                    logger_debug.info(f"🛡️ Protection blocked query (empty response)")
+                    logger_debug.debug(f"🛡️ Protection blocked query (empty response)")
                     response_message = type('obj', (object,), {
                         'content': f"Malicious query detected. This query has been blocked by Galileo Protect.",
                         'role': 'assistant',
