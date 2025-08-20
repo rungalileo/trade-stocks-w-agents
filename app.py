@@ -791,12 +791,6 @@ async def main():
                 help="The name of your Galileo log stream"
             )
 
-            galileo_api_key = st.text_input(
-                "Galileo API Key",
-                value=st.secrets["galileo_api_key"],
-                help="The API key for your Galileo project"
-            )
-
             galileo_console_url = st.text_input(
                 "Galileo Console URL",
                 value=st.secrets["galileo_console_url"],
@@ -830,7 +824,6 @@ async def main():
             # Show Start Session button when no active session
             if st.button("Start New Session", type="primary"):
 
-                os.environ["GALILEO_API_KEY"] = galileo_api_key
                 os.environ["GALILEO_CONSOLE_URL"] = galileo_console_url
 
                 st.session_state.galileo_logger = initialize_galileo_logger(galileo_project, galileo_log_stream)
@@ -999,7 +992,7 @@ async def main():
                 
                 # Display Galileo link if available
                 if "galileo_logger" in st.session_state:
-                    api_key = st.secrets["galileo_api_key"]
+                    api_key = os.environ["GALILEO_API_KEY"]
                     project_id = get_galileo_project_id(api_key, st.session_state.galileo_logger.project_name)
                     log_stream_id = get_galileo_log_stream_id(api_key, project_id, st.session_state.galileo_logger.log_stream_name) if project_id else None
                     
