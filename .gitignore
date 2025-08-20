@@ -3,6 +3,10 @@
 *~
 env/
 #~
-.streamlit
+
+# Streamlit
+.streamlit/secrets.toml
+
 tools/__pycache__/
 __*
+.DS_Store
