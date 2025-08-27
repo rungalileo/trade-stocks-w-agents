@@ -753,7 +753,7 @@ def process_chat_message_sync(prompt: str,
         raise
 
 async def main():
-    st.title("RAG Chat Application")
+    st.title("Finance Agent")
     logger_debug.info("Starting Streamlit application")
     
     # Get query parameters
@@ -773,51 +773,138 @@ async def main():
     if "ambiguous_tool_names" not in st.session_state:
         st.session_state.ambiguous_tool_names = False
     
+    if "selected_galileo_env" not in st.session_state:
+        st.session_state.selected_galileo_env = None
+    
+    if "selected_model" not in st.session_state:
+        st.session_state.selected_model = "gpt-4o-mini"
+    
     # Sidebar for configuration
     with st.sidebar:
-        st.header("Configuration")
 
         if not "galileo_logger" in st.session_state:
             # Add Galileo configuration fields
             st.subheader("Galileo Configuration")
             galileo_project = st.text_input(
-                "Galileo Project",
+                "Project",
                 value=default_project,
                 help="The name of your Galileo project"
             )
             galileo_log_stream = st.text_input(
-                "Galileo Log Stream",
+                "Log Stream",
                 value=default_log_stream,
                 help="The name of your Galileo log stream"
             )
 
-            galileo_api_key = st.text_input(
-                "Galileo API Key",
-                value=st.secrets["galileo_api_key"],
-                help="The API key for your Galileo project"
-            )
 
-            galileo_console_url = st.text_input(
-                "Galileo Console URL",
-                value=st.secrets["galileo_console_url"],
-                help="The URL of your Galileo console"
-            )
+
+            # Galileo environment selection
+            st.write("Environment")
+            
+            # Environment mapping
+            galileo_environments = {
+                "dev": "https://console-galileo-v2-dev.gcp-dev.galileo.ai/",
+                "staging": "https://console-galileo-v2-staging.gcp-dev.galileo.ai/",
+                "demo": "https://console.demo-v2.galileocloud.io/",
+                "prod": "https://app.galileo.ai/"
+            }
+            
+            # API key mapping for each environment
+            galileo_api_keys = {
+                "dev": "OzlfSCQR816JT63KBuEcv67E4P5NvqEahDy54g0_OIY",
+                "staging": "3c0tFRDNy5gdov3fYP0QGqE4u0Qx6DgaAlugEXXG6B0",
+                "demo": "b0b50Lq487vZHF9sqvIbWwJjBKTj36DQoGgK_o8Hlpc",
+                "prod": "_BXCAKY1XMCbKV9Wlg33HrEl_2G2H4E5opoZ_5GkaGQ"
+            }
+            
+            # Determine default environment based on current URL (only on first load)
+            if st.session_state.selected_galileo_env is None:
+                current_url = st.secrets["galileo_console_url"]
+                default_env = "demo"  # fallback
+                for env, url in galileo_environments.items():
+                    if url == current_url:
+                        default_env = env
+                        break
+                st.session_state.selected_galileo_env = default_env
+            
+            # Create environment selection using columns for chip-like appearance
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                dev_selected = st.button("Dev", key="dev_env", type="primary" if st.session_state.selected_galileo_env == "dev" else "secondary", use_container_width=True)
+            with col2:
+                staging_selected = st.button("Staging", key="staging_env", type="primary" if st.session_state.selected_galileo_env == "staging" else "secondary", use_container_width=True)
+            
+            col3, col4 = st.columns(2)
+            
+            with col3:
+                demo_selected = st.button("Demo", key="demo_env", type="primary" if st.session_state.selected_galileo_env == "demo" else "secondary", use_container_width=True)
+            with col4:
+                prod_selected = st.button("Prod", key="prod_env", type="primary" if st.session_state.selected_galileo_env == "prod" else "secondary", use_container_width=True)
+            
+            # Update selected environment based on button clicks
+            if dev_selected:
+                st.session_state.selected_galileo_env = "dev"
+                st.rerun()
+            elif staging_selected:
+                st.session_state.selected_galileo_env = "staging"
+                st.rerun()
+            elif demo_selected:
+                st.session_state.selected_galileo_env = "demo"
+                st.rerun()
+            elif prod_selected:
+                st.session_state.selected_galileo_env = "prod"
+                st.rerun()
+            
+            galileo_console_url = galileo_environments[st.session_state.selected_galileo_env]
         
 
-        # Add model selection dropdown
-        st.subheader("Model Configuration")
-        model_option = st.selectbox(
-            "Select GPT Model",
-            options=["gpt-4o-mini", "gpt-4o", "gpt-4", "gpt-3.5-turbo"],
-            index=0,  # Default to GPT-4
-            format_func=lambda x: "GPT-4" if x == "gpt-4" else "GPT-3.5 Turbo" if x == "gpt-3.5-turbo" else "GPT-4o-mini" if x == "gpt-4o-mini" else "GPT-4o",
-            help="Select which OpenAI model to use for chat responses"
-        )
+        # Add model selection
+        st.subheader("Model")
+        
+        # Model mapping
+        model_options = {
+            "gpt-4o-mini": "GPT-4o Mini",
+            "gpt-4o": "GPT-4o",
+            "gpt-4": "GPT-4",
+            "gpt-3.5-turbo": "GPT-3.5 Turbo"
+        }
+        
+        # Create model selection using columns for chip-like appearance
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            gpt4o_mini_selected = st.button("GPT-4o Mini", key="gpt4o_mini", type="primary" if st.session_state.selected_model == "gpt-4o-mini" else "secondary", use_container_width=True)
+        with col2:
+            gpt4o_selected = st.button("GPT-4o", key="gpt4o", type="primary" if st.session_state.selected_model == "gpt-4o" else "secondary", use_container_width=True)
+        
+        col3, col4 = st.columns(2)
+        
+        with col3:
+            gpt4_selected = st.button("GPT-4", key="gpt4", type="primary" if st.session_state.selected_model == "gpt-4" else "secondary", use_container_width=True)
+        with col4:
+            gpt35_selected = st.button("GPT-3.5", key="gpt35", type="primary" if st.session_state.selected_model == "gpt-3.5-turbo" else "secondary", use_container_width=True)
+        
+        # Update selected model based on button clicks
+        if gpt4o_mini_selected:
+            st.session_state.selected_model = "gpt-4o-mini"
+            st.rerun()
+        elif gpt4o_selected:
+            st.session_state.selected_model = "gpt-4o"
+            st.rerun()
+        elif gpt4_selected:
+            st.session_state.selected_model = "gpt-4"
+            st.rerun()
+        elif gpt35_selected:
+            st.session_state.selected_model = "gpt-3.5-turbo"
+            st.rerun()
+        
+        model_option = st.session_state.selected_model
         logger_debug.debug(f"Selected model: {model_option}")
         
         # Add checkbox for ambiguous tool names
         ambiguous_tool_names = st.checkbox(
-            "Ambiguous Tool Names", 
+            "Use Ambiguous Tool Names", 
             value=st.session_state.ambiguous_tool_names,
             help="Makes sell / buy functions ambiguous to induce poor tool selection"
         )
@@ -825,11 +912,30 @@ async def main():
         st.session_state.ambiguous_tool_names = ambiguous_tool_names
         logger_debug.debug(f"Ambiguous tool names: {ambiguous_tool_names}")
         
+
+        
+        # RAG Configuration
+        st.subheader("RAG Configuration")
+        use_rag = st.checkbox("Use RAG", value=True)
+        namespace = st.secrets["pinecone_namespace"]
+        top_k = st.number_input("Top K", min_value=1, max_value=20, value=12)
+        logger_debug.debug(f"Configuration - RAG: {use_rag}, Namespace: {namespace}, Top K: {top_k}")
+        
+        # Prompt Configuration
+        st.subheader("Prompt")
+        system_prompt = st.text_area("System Prompt", value="""You are a stock market analyst and trading assistant. You help users analyze stocks and execute trades. Follow these guidelines:
+                                     For analysis questions, first use the provided context to answer. Only use tools if the context doesn't contain the information needed.
+                                     For trading questions, first use the provided context to answer. Only use tools if the context doesn't contain the information needed.
+                                     For any questions, if you don't have the information needed, say so.""")
+        
         # Session control buttons
         if not st.session_state.session_active:
             # Show Start Session button when no active session
             if st.button("Start New Session", type="primary"):
 
+                # Get the API key for the selected environment
+                galileo_api_key = galileo_api_keys[st.session_state.selected_galileo_env]
+                
                 os.environ["GALILEO_API_KEY"] = galileo_api_key
                 os.environ["GALILEO_CONSOLE_URL"] = galileo_console_url
 
@@ -854,18 +960,6 @@ async def main():
                     st.session_state.galileo_session_id = None
                 
                 st.rerun()  # Rerun to update UI
-        
-        # Existing configuration
-        st.subheader("RAG Configuration")
-        use_rag = st.checkbox("Use RAG", value=True)
-        namespace = st.text_input("Namespace", value="sp500-qa-demo")
-        top_k = st.number_input("Top K", min_value=1, max_value=20, value=3)
-        system_prompt = st.text_area("System Prompt", value="""You are a stock market analyst and trading assistant. You help users analyze stocks and execute trades. Follow these guidelines:
-                                     For analysis questions, first use the provided context to answer. Only use tools if the context doesn't contain the information needed.
-                                     For trading questions, first use the provided context to answer. Only use tools if the context doesn't contain the information needed.
-                                     For any questions, if you don't have the information needed, say so.""")
-        logger_debug.debug(f"Configuration - RAG: {use_rag}, Namespace: {namespace}, Top K: {top_k}")
-        
 
         if "galileo_logger" in st.session_state:
             hallucination_button = st.button(
