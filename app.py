@@ -814,15 +814,9 @@ async def main():
             # Galileo environment selection
             st.write("Environment")
             
-            # Determine default environment based on current URL (only on first load)
+            # Set default environment from secrets
             if st.session_state.selected_galileo_env is None:
-                current_url = st.secrets["galileo_console_url"]
-                default_env = "demo"  # fallback
-                for env, url in galileo_environments.items():
-                    if url == current_url:
-                        default_env = env
-                        break
-                st.session_state.selected_galileo_env = default_env
+                st.session_state.selected_galileo_env = st.secrets.get("default_galileo_env", "demo")
             
             # Create environment selection using columns for chip-like appearance
             col1, col2 = st.columns(2)
@@ -1093,8 +1087,9 @@ async def main():
                     # Get the API key and console URL for the selected environment
                     api_key = galileo_api_keys[st.session_state.selected_galileo_env]
                     console_url = galileo_environments[st.session_state.selected_galileo_env]
-                    project_id = get_galileo_project_id(api_key, st.session_state.galileo_logger.project_name)
-                    log_stream_id = get_galileo_log_stream_id(api_key, project_id, st.session_state.galileo_logger.log_stream_name) if project_id else None
+                    
+                    project_id = get_galileo_project_id(api_key, st.session_state.galileo_logger.project_name, console_url)
+                    log_stream_id = get_galileo_log_stream_id(api_key, project_id, st.session_state.galileo_logger.log_stream_name, console_url) if project_id else None
                     
                     if project_id and log_stream_id:
                         project_url = f"{console_url}/project/{project_id}/log-streams/{log_stream_id}"
