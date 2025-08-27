@@ -777,6 +777,21 @@ async def main():
     if "selected_model" not in st.session_state:
         st.session_state.selected_model = "gpt-4o-mini"
     
+    # Environment and API key mappings (global scope)
+    galileo_environments = {
+        "dev": "https://console-galileo-v2-dev.gcp-dev.galileo.ai/",
+        "staging": "https://console-galileo-v2-staging.gcp-dev.galileo.ai/",
+        "demo": "https://console.demo-v2.galileocloud.io/",
+        "prod": "https://app.galileo.ai/"
+    }
+    
+    galileo_api_keys = {
+        "dev": st.secrets["galileo_api_key_dev"],
+        "staging": st.secrets["galileo_api_key_staging"],
+        "demo": st.secrets["galileo_api_key_demo"],
+        "prod": st.secrets["galileo_api_key_prod"]
+    }
+    
     # Sidebar for configuration
     with st.sidebar:
 
@@ -798,22 +813,6 @@ async def main():
 
             # Galileo environment selection
             st.write("Environment")
-            
-            # Environment mapping
-            galileo_environments = {
-                "dev": "https://console-galileo-v2-dev.gcp-dev.galileo.ai/",
-                "staging": "https://console-galileo-v2-staging.gcp-dev.galileo.ai/",
-                "demo": "https://console.demo-v2.galileocloud.io/",
-                "prod": "https://app.galileo.ai/"
-            }
-            
-            # API key mapping for each environment
-            galileo_api_keys = {
-                "dev": st.secrets["galileo_api_key_dev"],
-                "staging": st.secrets["galileo_api_key_staging"],
-                "demo": st.secrets["galileo_api_key_demo"],
-                "prod": st.secrets["galileo_api_key_prod"]
-            }
             
             # Determine default environment based on current URL (only on first load)
             if st.session_state.selected_galileo_env is None:
