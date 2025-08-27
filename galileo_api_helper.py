@@ -38,21 +38,22 @@ def get_galileo_api_url() -> str:
     
     return f"https://api.{domain}"
 
-def get_galileo_project_id(api_key: str, project_name: str, starting_token: int = 0, limit: int = 10) -> str:
+def get_galileo_project_id(api_key: str, project_name: str, console_url: str = None, starting_token: int = 0, limit: int = 10) -> str:
     """
     Fetches the Galileo project ID for a given project name.
 
     Args:
         api_key (str): Your Galileo API key.
         project_name (str): The name of the project to search for.
+        console_url (str): The Galileo console URL to use (optional, defaults to secrets).
         starting_token (int): The starting token for pagination.
         limit (int): The number of projects to fetch.
 
     Returns:
         str: The project ID if found, else None.
     """
-    # Get the base URL from secrets
-    galileo_url = get_galileo_app_url()
+    # Get the base URL from parameter or secrets
+    galileo_url = console_url if console_url else get_galileo_app_url()
     
     url = f"{galileo_url}/api/galileo/public/v2/projects/paginated?starting_token={starting_token}&limit={limit}"
     headers = {
@@ -80,7 +81,7 @@ def get_galileo_project_id(api_key: str, project_name: str, starting_token: int 
             return project.get("id")
     return None
 
-def get_galileo_log_stream_id(api_key: str, project_id: str, log_stream_name: str) -> str:
+def get_galileo_log_stream_id(api_key: str, project_id: str, log_stream_name: str, console_url: str = None) -> str:
     """
     Fetches the Galileo log stream ID for a given project ID and log stream name.
 
@@ -88,12 +89,13 @@ def get_galileo_log_stream_id(api_key: str, project_id: str, log_stream_name: st
         api_key (str): Your Galileo API key.
         project_id (str): The ID of the project.
         log_stream_name (str): The name of the log stream to search for.
+        console_url (str): The Galileo console URL to use (optional, defaults to secrets).
 
     Returns:
         str: The log stream ID if found, else None.
     """
-    # Get the base URL from secrets
-    galileo_url = get_galileo_app_url()
+    # Get the base URL from parameter or secrets
+    galileo_url = console_url if console_url else get_galileo_app_url()
     
     url = f"{galileo_url}/api/galileo/v2/projects/{project_id}/log_streams"
     headers = {
