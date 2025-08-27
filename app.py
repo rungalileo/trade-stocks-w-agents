@@ -22,10 +22,8 @@ from tools.sell_stocks import sell_stocks
 logging.basicConfig(level=logging.DEBUG)
 logger_debug = logging.getLogger(__name__)
 
-os.environ["GALILEO_API_KEY"] = st.secrets["galileo_api_key"]
 os.environ["GALILEO_PROJECT_NAME"] = st.secrets["galileo_project"]
 os.environ["GALILEO_LOG_STREAM_NAME"] = st.secrets["galileo_log_stream"]
-os.environ["GALILEO_CONSOLE_URL"] = st.secrets["galileo_console_url"]
 # Initialize OpenAI client
 logger_debug.info("Initializing OpenAI client")
 openai_client = OpenAI(
@@ -811,10 +809,10 @@ async def main():
             
             # API key mapping for each environment
             galileo_api_keys = {
-                "dev": "OzlfSCQR816JT63KBuEcv67E4P5NvqEahDy54g0_OIY",
-                "staging": "3c0tFRDNy5gdov3fYP0QGqE4u0Qx6DgaAlugEXXG6B0",
-                "demo": "b0b50Lq487vZHF9sqvIbWwJjBKTj36DQoGgK_o8Hlpc",
-                "prod": "_BXCAKY1XMCbKV9Wlg33HrEl_2G2H4E5opoZ_5GkaGQ"
+                "dev": st.secrets["galileo_api_key_dev"],
+                "staging": st.secrets["galileo_api_key_staging"],
+                "demo": st.secrets["galileo_api_key_demo"],
+                "prod": st.secrets["galileo_api_key_prod"]
             }
             
             # Determine default environment based on current URL (only on first load)
@@ -1093,12 +1091,14 @@ async def main():
                 
                 # Display Galileo link if available
                 if "galileo_logger" in st.session_state:
-                    api_key = st.secrets["galileo_api_key"]
+                    # Get the API key and console URL for the selected environment
+                    api_key = galileo_api_keys[st.session_state.selected_galileo_env]
+                    console_url = galileo_environments[st.session_state.selected_galileo_env]
                     project_id = get_galileo_project_id(api_key, st.session_state.galileo_logger.project_name)
                     log_stream_id = get_galileo_log_stream_id(api_key, project_id, st.session_state.galileo_logger.log_stream_name) if project_id else None
                     
                     if project_id and log_stream_id:
-                        project_url = f"{st.secrets['galileo_console_url']}/project/{project_id}/log-streams/{log_stream_id}"
+                        project_url = f"{console_url}/project/{project_id}/log-streams/{log_stream_id}"
                         # Add a small icon with tooltip in the sidebar
                         with st.sidebar:
                             st.markdown("---")  # Add a subtle separator
