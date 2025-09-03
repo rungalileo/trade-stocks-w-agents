@@ -2,6 +2,8 @@
 
 A Streamlit-based chat application that uses Retrieval Augmented Generation (RAG) to analyze financial transcripts and provide intelligent responses. The application includes tools for stock trading simulation and observability through Galileo.
 
+Demo URL: https://build-better-agents-with-galileo.streamlit.app/
+
 ## Key Features
 
 - RAG-powered question answering over financial transcripts
