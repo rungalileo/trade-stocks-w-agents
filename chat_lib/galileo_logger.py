@@ -4,6 +4,7 @@ Shared Galileo logger utilities for both Streamlit and Flask applications.
 import os
 import logging
 from galileo import GalileoLogger
+from galileo.config import GalileoPythonConfig
 
 logger_debug = logging.getLogger(__name__)
 
@@ -23,6 +24,7 @@ def initialize_galileo_logger(project_name: str, log_stream: str) -> GalileoLogg
     # Log the initialization
     logger_debug.info(f"Initializing Galileo logger - Project: {project_name}, Log Stream: {log_stream} - Console URL: {os.environ['GALILEO_CONSOLE_URL']}")
     
+    GalileoPythonConfig.get().reset()  # This one line fixes everything!
     # Create and return a new logger
     return GalileoLogger(
         project=project_name,
